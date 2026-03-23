@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+db.sqlite3
+*.sqlite3
+
+# Large data files (keep samples)
+data/*.csv
+data/*.parquet
+!data/samples/
+
+# Trained artifacts
+artifacts/*.joblib
+artifacts/*.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
