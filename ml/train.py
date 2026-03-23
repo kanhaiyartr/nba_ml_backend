@@ -27,7 +27,7 @@ from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 from sklearn.model_selection import StratifiedKFold
 from xgboost import XGBClassifier
 
-from .preprocess import preprocess_games
+from .preprocess import main as preprocess_main
 from .features.build import build_feature_matrix
 
 ARTIFACTS_DIR = Path(__file__).resolve().parent.parent / "artifacts"
@@ -101,9 +101,9 @@ def train(
     """
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Preprocess
+    # 1. Preprocess (mirrors report's preprocess.main — always writes games_clean.csv)
     print("[1/4] Preprocessing games …")
-    games_df = preprocess_games(raw_path=games_path)
+    games_df = preprocess_main(raw_path=games_path)
 
     # Optional player / stint data for chemistry
     player_game_df, stint_df = None, None
