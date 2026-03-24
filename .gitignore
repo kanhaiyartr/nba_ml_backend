@@ -12,6 +12,12 @@ data/*.csv
 data/*.parquet
 !data/samples/
 
+# Real NBA data assets (large CSVs)
+artifacts/assets/*.csv
+
+# Cleaned intermediate data
+artifacts/games_clean.csv
+
 # Trained artifacts
 artifacts/*.joblib
 artifacts/*.json

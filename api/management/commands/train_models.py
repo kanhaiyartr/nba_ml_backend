@@ -3,7 +3,7 @@ Django management command to train the ML models.
 
 Usage:
     python manage.py train_models
-    python manage.py train_models --games data/Games.csv
+    python manage.py train_models --games artifacts/assets/Games.csv
 """
 from django.core.management.base import BaseCommand
 
@@ -18,32 +18,32 @@ class Command(BaseCommand):
             "--games",
             type=str,
             default=None,
-            help="Path to raw Games.csv (defaults to DATA_DIR/Games.csv)",
+            help="Path to raw Games.csv (defaults to artifacts/assets/Games.csv)",
+        )
+        parser.add_argument(
+            "--team-stats",
+            type=str,
+            default=None,
+            help="Path to TeamStatistics.csv for box-score features",
         )
         parser.add_argument(
             "--player-stats",
             type=str,
             default=None,
-            help="Path to PlayerGameStats.csv for chemistry features",
-        )
-        parser.add_argument(
-            "--lineups",
-            type=str,
-            default=None,
-            help="Path to Lineups.csv for shared-minutes chemistry",
+            help="Path to PlayerStatistics.csv for chemistry features",
         )
 
     def handle(self, *args, **options):
         from pathlib import Path
 
         games = Path(options["games"]) if options["games"] else None
-        pgs = Path(options["player_stats"]) if options["player_stats"] else None
-        lups = Path(options["lineups"]) if options["lineups"] else None
+        ts = Path(options["team_stats"]) if options["team_stats"] else None
+        ps = Path(options["player_stats"]) if options["player_stats"] else None
 
         self.stdout.write("Starting model training …\n")
         metrics = train(
             games_path=games,
-            player_game_path=pgs,
-            stint_path=lups,
+            team_stats_path=ts,
+            player_stats_path=ps,
         )
         self.stdout.write(self.style.SUCCESS("Training complete."))

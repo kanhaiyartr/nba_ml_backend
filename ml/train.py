@@ -28,6 +28,7 @@ from sklearn.model_selection import StratifiedKFold
 from xgboost import XGBClassifier
 
 from .preprocess import main as preprocess_main
+from .data_loader import load_team_statistics, load_player_statistics
 from .features.build import build_feature_matrix
 
 ARTIFACTS_DIR = Path(__file__).resolve().parent.parent / "artifacts"
@@ -90,8 +91,8 @@ def _summarise(fold_metrics: list[dict]) -> dict:
 
 def train(
     games_path: Path | None = None,
-    player_game_path: Path | None = None,
-    stint_path: Path | None = None,
+    team_stats_path: Path | None = None,
+    player_stats_path: Path | None = None,
     artifacts_dir: Path = ARTIFACTS_DIR,
 ) -> dict:
     """
@@ -101,34 +102,38 @@ def train(
     """
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Preprocess (mirrors report's preprocess.main — always writes games_clean.csv)
+    # 1. Preprocess games
     print("[1/4] Preprocessing games …")
     games_df = preprocess_main(raw_path=games_path)
 
-    # Optional player / stint data for chemistry
-    player_game_df, stint_df = None, None
+    # 2. Load supplementary data
+    print("[2/4] Loading team statistics and player statistics …")
     try:
-        from .data_loader import load_player_game_stats, load_lineups
-
-        if player_game_path:
-            player_game_df = pd.read_csv(player_game_path, low_memory=False)
+        if team_stats_path:
+            team_stats_df = pd.read_csv(team_stats_path, low_memory=False)
         else:
-            player_game_df = load_player_game_stats()
-    except Exception:
-        player_game_df = None
+            team_stats_df = load_team_statistics()
+        print(f"       TeamStatistics: {len(team_stats_df)} rows")
+    except Exception as exc:
+        print(f"       TeamStatistics not available: {exc}")
+        team_stats_df = None
 
     try:
-        if stint_path:
-            stint_df = pd.read_csv(stint_path, low_memory=False)
+        if player_stats_path:
+            player_stats_df = pd.read_csv(player_stats_path, low_memory=False)
         else:
-            stint_df = load_lineups()
-    except Exception:
-        stint_df = None
+            player_stats_df = load_player_statistics()
+        print(f"       PlayerStatistics: {len(player_stats_df)} rows")
+    except Exception as exc:
+        print(f"       PlayerStatistics not available: {exc}")
+        player_stats_df = None
 
-    # 2. Build features
-    print("[2/4] Building feature matrix …")
+    # 3. Build features
+    print("[3/4] Building feature matrix …")
     full_df, feature_cols = build_feature_matrix(
-        games_df, player_game_df=player_game_df, stint_df=stint_df
+        games_df,
+        team_stats_df=team_stats_df,
+        player_stats_df=player_stats_df,
     )
 
     X = full_df[feature_cols].values
@@ -137,12 +142,11 @@ def train(
     print(f"       Samples: {len(y)}  |  Features: {len(feature_cols)}")
     print(f"       Class balance: {y.mean():.3f} home-win rate")
 
-    # Persist feature column order (needed at inference time)
     with open(artifacts_dir / "feature_columns.json", "w") as f:
         json.dump(feature_cols, f, indent=2)
 
-    # 3. Cross-validation
-    print(f"[3/4] {N_FOLDS}-fold stratified CV …")
+    # 4. Cross-validation
+    print(f"[4/4] {N_FOLDS}-fold stratified CV …")
     skf = StratifiedKFold(n_splits=N_FOLDS, shuffle=True, random_state=42)
 
     rf_folds: list[dict] = []
@@ -152,14 +156,12 @@ def train(
         X_tr, X_val = X[train_idx], X[val_idx]
         y_tr, y_val = y[train_idx], y[val_idx]
 
-        # Random Forest
         rf = RandomForestClassifier(**RF_PARAMS)
         rf.fit(X_tr, y_tr)
         rf_pred = rf.predict(X_val)
         rf_prob = rf.predict_proba(X_val)[:, 1]
         rf_folds.append(_evaluate_fold(y_val, rf_pred, rf_prob))
 
-        # XGBoost
         xgb = XGBClassifier(**XGB_PARAMS)
         xgb.fit(X_tr, y_tr, verbose=False)
         xgb_pred = xgb.predict(X_val)
@@ -182,8 +184,8 @@ def train(
     for k in ("accuracy", "f1", "auc"):
         print(f"  {k}: {xgb_summary[k]['mean']:.4f} ± {xgb_summary[k]['std']:.4f}")
 
-    # 4. Retrain on full data and persist
-    print("\n[4/4] Retraining on full dataset and saving artifacts …")
+    # 5. Retrain on full data and persist
+    print("\nRetraining on full dataset and saving artifacts …")
     rf_full = RandomForestClassifier(**RF_PARAMS)
     rf_full.fit(X, y)
     joblib.dump(rf_full, artifacts_dir / "model_rf.joblib")

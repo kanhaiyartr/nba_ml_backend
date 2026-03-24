@@ -22,57 +22,52 @@ import pandas as pd
 
 ROLLING_WINDOW = 10
 
+# Internal short names used throughout the pipeline
 BOX_SCORE_AGG_COLS = ["fg_pct", "fg3_pct", "ft_pct", "reb", "ast", "tov"]
 
+# Mapping from TeamStatistics.csv real column names → internal short names
+TEAM_STATS_COL_MAP = {
+    "fieldGoalsPercentage": "fg_pct",
+    "threePointersPercentage": "fg3_pct",
+    "freeThrowsPercentage": "ft_pct",
+    "reboundsTotal": "reb",
+    "assists": "ast",
+    "turnovers": "tov",
+}
 
-def enrich_games_with_player_stats(
+
+def enrich_games_with_team_stats(
     games_df: pd.DataFrame,
-    player_game_df: pd.DataFrame,
+    team_stats_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Aggregate per-player box-score rows into team-game averages and merge
-    them onto the games DataFrame so rolling features can use shooting, rebound,
-    assist, and turnover data.
+    Join TeamStatistics.csv (2 rows per game, one per team) onto the
+    games DataFrame so that each game row gets home/away box-score columns.
     """
-    available = [c for c in BOX_SCORE_AGG_COLS if c in player_game_df.columns]
-    if not available or "teamId" not in player_game_df.columns:
-        return games_df
+    needed = ["gameId", "teamId", "home"] + list(TEAM_STATS_COL_MAP.keys())
+    available = [c for c in needed if c in team_stats_df.columns]
+    ts = team_stats_df[available].copy()
 
-    game_id_col = "gameId"
-    if game_id_col not in player_game_df.columns:
-        return games_df
+    ts.rename(columns=TEAM_STATS_COL_MAP, inplace=True)
+    short_cols = [c for c in BOX_SCORE_AGG_COLS if c in ts.columns]
 
-    team_agg = (
-        player_game_df
-        .groupby(["teamId", game_id_col])[available]
-        .mean()
-        .reset_index()
-    )
+    home_ts = ts[ts["home"] == 1].copy()
+    away_ts = ts[ts["home"] == 0].copy()
 
-    # Build a game_id in the games df so we can join.
-    # If no explicit gameId, manufacture one from (date, home, away).
-    if "gameId" not in games_df.columns:
-        # Same hash logic used by the sample data generator
-        games_df = games_df.copy()
-        games_df["_gameId"] = games_df.apply(
-            lambda r: hash((r["gameDateTimeEst"], r["hometeamId"], r["awayteamId"])) % 10**8,
-            axis=1,
-        )
-    else:
-        games_df = games_df.copy()
-        games_df["_gameId"] = games_df["gameId"]
+    home_ts = home_ts.rename(
+        columns={c: f"home_{c}" for c in short_cols}
+    ).rename(columns={"teamId": "hometeamId"})
+    home_ts = home_ts[["gameId", "hometeamId"] + [f"home_{c}" for c in short_cols]]
 
-    home_stats = team_agg.rename(
-        columns={c: f"home_{c}" for c in available}
-    ).rename(columns={"teamId": "hometeamId", game_id_col: "_gameId"})
+    away_ts = away_ts.rename(
+        columns={c: f"away_{c}" for c in short_cols}
+    ).rename(columns={"teamId": "awayteamId"})
+    away_ts = away_ts[["gameId", "awayteamId"] + [f"away_{c}" for c in short_cols]]
 
-    away_stats = team_agg.rename(
-        columns={c: f"away_{c}" for c in available}
-    ).rename(columns={"teamId": "awayteamId", game_id_col: "_gameId"})
-
-    games_df = games_df.merge(home_stats, on=["hometeamId", "_gameId"], how="left")
-    games_df = games_df.merge(away_stats, on=["awayteamId", "_gameId"], how="left")
-    games_df.drop(columns=["_gameId"], inplace=True)
+    games_df = games_df.copy()
+    games_df["gameId"] = games_df["gameId"].astype(home_ts["gameId"].dtype)
+    games_df = games_df.merge(home_ts, on=["gameId", "hometeamId"], how="left")
+    games_df = games_df.merge(away_ts, on=["gameId", "awayteamId"], how="left")
 
     return games_df
 
@@ -82,7 +77,6 @@ def _team_game_log(games_df: pd.DataFrame) -> pd.DataFrame:
     Explode each game into two rows — one per participating team — so we
     can compute per-team rolling stats regardless of home/away status.
     """
-    # Collect optional box-score columns that may have been merged in
     home_extra = {c.replace("home_", ""): c for c in games_df.columns
                   if c.startswith("home_") and c.replace("home_", "") in BOX_SCORE_AGG_COLS}
     away_extra = {c.replace("away_", ""): c for c in games_df.columns
@@ -103,7 +97,6 @@ def _team_game_log(games_df: pd.DataFrame) -> pd.DataFrame:
         **{v: k for k, v in away_extra.items()},
     }
 
-    # Drop the "other side" prefixed cols to avoid column collisions
     home_drop = [c for c in games_df.columns if c.startswith("away_") and c in away_extra.values()]
     away_drop = [c for c in games_df.columns if c.startswith("home_") and c in home_extra.values()]
 
@@ -151,8 +144,8 @@ def build_game_features(
     window: int = ROLLING_WINDOW,
 ) -> pd.DataFrame:
     """
-    Given a cleaned games DataFrame (optionally enriched with box-score
-    aggregates), return one row per game with home/away rolling stats.
+    Given a cleaned games DataFrame (enriched with team box-score stats),
+    return one row per game with home/away rolling stats.
     """
     team_log = _team_game_log(games_df)
     team_log = _rolling_features(team_log, window)
@@ -172,17 +165,13 @@ def build_game_features(
         .rename(columns={"teamId": "awayteamId"})
     )
 
-    # Only merge on columns that exist in both sides
-    merge_home_on = ["hometeamId", "gameDateTimeEst"]
-    merge_away_on = ["awayteamId", "gameDateTimeEst"]
-
     merged = games_df.merge(
         home_feats.drop(columns=["is_home"]),
-        on=merge_home_on,
+        on=["hometeamId", "gameDateTimeEst"],
         how="left",
     ).merge(
         away_feats.drop(columns=["is_home"]),
-        on=merge_away_on,
+        on=["awayteamId", "gameDateTimeEst"],
         how="left",
     )
 

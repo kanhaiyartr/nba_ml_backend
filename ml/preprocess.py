@@ -3,7 +3,8 @@ Clean raw Games data and produce a game-level DataFrame ready for
 feature engineering.
 
 Follows the preprocessing logic from Chapter 4 of the report:
-  - Select the 7 required columns
+  - Select the required columns (including gameId for joins)
+  - Filter to Regular Season games only
   - Drop rows with missing critical fields
   - Derive binary target ``home_win``
   - Parse and normalise datetime
@@ -15,7 +16,7 @@ from pathlib import Path
 from .data_loader import load_games
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-RAW_FILE = BASE_DIR / "data" / "Games.csv"
+RAW_FILE = BASE_DIR / "artifacts" / "assets" / "Games.csv"
 OUT_FILE = BASE_DIR / "artifacts" / "games_clean.csv"
 
 
@@ -24,6 +25,7 @@ def main(raw_path=None):
 
     df = df[
         [
+            "gameId",
             "gameDateTimeEst",
             "hometeamId",
             "awayteamId",
@@ -33,6 +35,9 @@ def main(raw_path=None):
             "gameType",
         ]
     ]
+
+    # Filter to Regular Season only (exclude preseason, playoffs, all-star)
+    df = df[df["gameType"] == "Regular Season"].copy()
 
     df = df.dropna(
         subset=[
@@ -61,7 +66,7 @@ def main(raw_path=None):
     print("Saved cleaned dataset to:", OUT_FILE)
     print("Rows:", len(df))
     if len(df) > 0:
-        print("Date example:", df["gameDateTimeEst"].iloc[0])
+        print("Date range:", df["gameDateTimeEst"].iloc[0], "→", df["gameDateTimeEst"].iloc[-1])
 
     return df
 

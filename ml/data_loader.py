@@ -1,27 +1,36 @@
 """
 Load raw NBA CSV files into DataFrames.
 
-Structure mirrors the report's Chapter 4 data_loader.py, extended with
-loaders for player stats and lineup data needed for chemistry features.
+Default paths point at ``artifacts/assets/`` where the real NBA data lives.
 """
 from pathlib import Path
 
 import pandas as pd
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+ASSETS_DIR = BASE_DIR / "artifacts" / "assets"
 
 
 def load_games(path=None):
-    """Load Games.csv — matches the report's data_loader.load_games()."""
-    path = path or BASE_DIR / "data" / "Games.csv"
+    path = path or ASSETS_DIR / "Games.csv"
     return pd.read_csv(path, low_memory=False)
 
 
-def load_player_game_stats(path=None):
-    path = path or BASE_DIR / "data" / "PlayerGameStats.csv"
+def load_team_statistics(path=None):
+    path = path or ASSETS_DIR / "TeamStatistics.csv"
     return pd.read_csv(path, low_memory=False)
 
 
-def load_lineups(path=None):
-    path = path or BASE_DIR / "data" / "Lineups.csv"
+def load_player_statistics(path=None):
+    path = path or ASSETS_DIR / "PlayerStatistics.csv"
+    return pd.read_csv(path, low_memory=False)
+
+
+def load_players(path=None):
+    path = path or ASSETS_DIR / "Players.csv"
+    return pd.read_csv(path, low_memory=False)
+
+
+def load_team_histories(path=None):
+    path = path or ASSETS_DIR / "TeamHistories.csv"
     return pd.read_csv(path, low_memory=False)

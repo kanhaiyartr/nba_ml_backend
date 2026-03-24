@@ -2,8 +2,8 @@
 Assemble the full feature matrix for model training / inference.
 
 Combines:
-  1. Rolling team performance stats (team_stats module)
-  2. Team-level chemistry aggregates (chemistry module)
+  1. Rolling team performance stats (from TeamStatistics.csv via team_stats module)
+  2. Team-level chemistry aggregates (from PlayerStatistics.csv via chemistry module)
   3. Target variable ``home_win``
 """
 from __future__ import annotations
@@ -11,8 +11,14 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .team_stats import build_game_features, enrich_games_with_player_stats
-from .chemistry import compute_co_play, compute_shared_minutes, chemistry_score
+from .team_stats import build_game_features, enrich_games_with_team_stats
+from .chemistry import (
+    resolve_player_teams,
+    compute_co_play,
+    compute_shared_minutes,
+    compute_team_net_rating,
+    chemistry_score,
+)
 
 
 def _aggregate_team_chemistry(
@@ -32,37 +38,45 @@ def _aggregate_team_chemistry(
 
 def build_feature_matrix(
     games_df: pd.DataFrame,
-    player_game_df: pd.DataFrame | None = None,
-    stint_df: pd.DataFrame | None = None,
+    team_stats_df: pd.DataFrame | None = None,
+    player_stats_df: pd.DataFrame | None = None,
     rolling_window: int = 10,
 ) -> tuple[pd.DataFrame, list[str]]:
     """
     Build the model-ready feature matrix.
 
+    Parameters
+    ----------
+    games_df : cleaned games DataFrame (from preprocess)
+    team_stats_df : TeamStatistics.csv DataFrame (per-team-per-game box scores)
+    player_stats_df : PlayerStatistics.csv DataFrame (per-player-per-game rows)
+    rolling_window : number of prior games for rolling averages
+
     Returns
     -------
     (X_with_target, feature_columns)
-        DataFrame containing feature columns + ``home_win``;
-        and the ordered list of feature column names.
     """
-    # Merge per-player box-score stats into team-game aggregates so that
-    # the rolling feature builder has fg_pct, reb, ast, tov, etc.
+    # -- Enrich games with team box-score stats from TeamStatistics ----------
     enriched = games_df
-    if player_game_df is not None and not player_game_df.empty:
-        enriched = enrich_games_with_player_stats(games_df, player_game_df)
+    if team_stats_df is not None and not team_stats_df.empty:
+        enriched = enrich_games_with_team_stats(games_df, team_stats_df)
 
     df = build_game_features(enriched, window=rolling_window)
 
-    # -- Chemistry features (optional) --------------------------------------
-    if player_game_df is not None and not player_game_df.empty:
-        co_play = compute_co_play(player_game_df)
-        if stint_df is not None and not stint_df.empty:
-            shared_min = compute_shared_minutes(stint_df)
-        else:
-            shared_min = co_play[["teamId", "playerA", "playerB"]].copy()
-            shared_min["shared_minutes"] = 0.0
+    # -- Chemistry features --------------------------------------------------
+    if player_stats_df is not None and not player_stats_df.empty:
+        print("       Computing chemistry features …")
+        player_team = resolve_player_teams(player_stats_df, games_df)
 
-        chem = chemistry_score(co_play, shared_min)
+        co_play = compute_co_play(player_team)
+
+        shared_min = compute_shared_minutes(player_team)
+
+        team_nr = None
+        if team_stats_df is not None and not team_stats_df.empty:
+            team_nr = compute_team_net_rating(team_stats_df)
+
+        chem = chemistry_score(co_play, shared_min, team_nr)
         team_chem = _aggregate_team_chemistry(chem)
 
         df = df.merge(
@@ -86,8 +100,6 @@ def build_feature_matrix(
         [c for c in df.columns if c.startswith(("home_roll_", "away_roll_"))]
     ) + ["home_chemistry", "away_chemistry"]
 
-    # Only keep rows where core rolling features (score, opp_score, win) exist;
-    # fill optional box-score rolling cols with 0 if missing.
     core_roll = [c for c in feature_cols if "roll_score" in c or "roll_opp_score" in c or "roll_win" in c]
     df.dropna(subset=core_roll, inplace=True)
 
