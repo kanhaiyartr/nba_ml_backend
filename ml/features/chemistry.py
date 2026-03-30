@@ -187,6 +187,14 @@ def _min_max(series: pd.Series) -> pd.Series:
     return (series - mn) / (mx - mn)
 
 
+def _group_min_max(series: pd.Series) -> pd.Series:
+    """Min-max normalize within a groupby context (per-team)."""
+    mn, mx = series.min(), series.max()
+    if mx == mn:
+        return pd.Series(0.5, index=series.index)
+    return (series - mn) / (mx - mn)
+
+
 # ── Composite chemistry score ──────────────────────────────────────────────
 
 def chemistry_score(
@@ -196,6 +204,11 @@ def chemistry_score(
 ) -> pd.DataFrame:
     """
     Combine pair-level metrics into a single ChemistryScore.
+
+    Normalization is done **per-team** for co_play and shared_minutes so
+    that the best pair within each team is close to 1.0 rather than being
+    compressed by all-time historical outliers from other franchises.
+    Net rating stays global since it's already team-level.
 
     Parameters
     ----------
@@ -214,8 +227,10 @@ def chemistry_score(
 
     df.fillna(0, inplace=True)
 
-    df["co_play_norm"] = _min_max(df["co_play"])
-    df["shared_minutes_norm"] = _min_max(df["shared_minutes"])
+    df["co_play_norm"] = df.groupby("teamId")["co_play"].transform(_group_min_max)
+    df["shared_minutes_norm"] = df.groupby("teamId")["shared_minutes"].transform(
+        _group_min_max
+    )
     df["net_rating_norm"] = _min_max(df["net_rating"])
 
     df["chemistry_score"] = (

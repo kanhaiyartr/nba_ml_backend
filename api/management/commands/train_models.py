@@ -3,7 +3,7 @@ Django management command to train the ML models.
 
 Usage:
     python manage.py train_models
-    python manage.py train_models --games artifacts/assets/Games.csv
+    python manage.py train_models --games data/Games.csv
 """
 from django.core.management.base import BaseCommand
 
@@ -18,7 +18,7 @@ class Command(BaseCommand):
             "--games",
             type=str,
             default=None,
-            help="Path to raw Games.csv (defaults to artifacts/assets/Games.csv)",
+            help="Path to raw Games.csv (defaults to data/Games.csv)",
         )
         parser.add_argument(
             "--team-stats",

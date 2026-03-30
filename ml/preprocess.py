@@ -16,7 +16,7 @@ from pathlib import Path
 from .data_loader import load_games
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-RAW_FILE = BASE_DIR / "artifacts" / "assets" / "Games.csv"
+RAW_FILE = BASE_DIR / "data" / "Games.csv"
 OUT_FILE = BASE_DIR / "artifacts" / "games_clean.csv"
 
 

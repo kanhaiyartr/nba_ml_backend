@@ -7,13 +7,10 @@ env/
 db.sqlite3
 *.sqlite3
 
-# Large data files (keep samples)
+# Raw NBA data files
 data/*.csv
 data/*.parquet
 !data/samples/
-
-# Real NBA data assets (large CSVs)
-artifacts/assets/*.csv
 
 # Cleaned intermediate data
 artifacts/games_clean.csv

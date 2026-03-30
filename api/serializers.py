@@ -8,16 +8,16 @@ class GamePredictionRequestSerializer(serializers.Serializer):
         child=serializers.IntegerField(),
         required=False,
         default=list,
-        help_text="Optional list of player IDs in the home lineup",
+        help_text="Optional list of 2-5 player IDs in the home lineup",
     )
     away_player_ids = serializers.ListField(
         child=serializers.IntegerField(),
         required=False,
         default=list,
-        help_text="Optional list of player IDs in the away lineup",
+        help_text="Optional list of 2-5 player IDs in the away lineup",
     )
     model = serializers.ChoiceField(
-        choices=["xgboost", "random_forest", "both"],
+        choices=["xgboost", "random_forest", "ensemble", "both"],
         default="xgboost",
         help_text="Which trained model to use for inference",
     )
@@ -27,3 +27,13 @@ class ChemistryPairRequestSerializer(serializers.Serializer):
     player_a_id = serializers.IntegerField()
     player_b_id = serializers.IntegerField()
     team_id = serializers.IntegerField(required=False)
+
+
+class LineupChemistryRequestSerializer(serializers.Serializer):
+    team_id = serializers.IntegerField(help_text="NBA team ID")
+    player_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        min_length=2,
+        max_length=5,
+        help_text="List of 2-5 player IDs on the team",
+    )

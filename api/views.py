@@ -3,88 +3,163 @@ DRF views for NBA game prediction, model metrics, and chemistry analysis.
 """
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
-import numpy as np
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from django.conf import settings
-
 from .serializers import (
     ChemistryPairRequestSerializer,
     GamePredictionRequestSerializer,
+    LineupChemistryRequestSerializer,
 )
-from .services import ModelNotReady, get_feature_columns, get_metrics, predict
+from .services import (
+    ModelNotReady,
+    build_features_for_matchup,
+    compute_lineup_chemistry,
+    get_feature_columns,
+    get_metrics,
+    get_team_players,
+    get_teams,
+    lookup_pair_chemistry,
+    predict,
+    _compute_team_rating,
+)
 
 
-class PredictGameView(APIView):
+class TeamListView(APIView):
     """
-    POST /api/predict/game/
+    GET /api/teams/
 
-    Accepts home/away team IDs (and optional player IDs) together with a
-    feature vector. Returns win probability, predicted winner, and SHAP
-    explanation.
-
-    The request body may supply ``features`` (a dict mapping feature names to
-    values) directly, or supply team/player IDs for a future auto-lookup path.
+    Returns all currently active NBA teams for dropdown selection.
     """
 
-    def post(self, request):
-        ser = GamePredictionRequestSerializer(data=request.data)
-        ser.is_valid(raise_exception=True)
-
-        model_name = ser.validated_data["model"]
-
-        features_dict: dict | None = request.data.get("features")
-        if not features_dict:
-            return Response(
-                {
-                    "detail": (
-                        "Provide a 'features' dict mapping feature column names "
-                        "to numeric values. Run GET /api/models/metrics/ to see "
-                        "the expected feature list."
-                    ),
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
+    def get(self, request):
         try:
-            columns = get_feature_columns()
+            teams = get_teams()
+        except ModelNotReady as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response(teams)
+
+
+class TeamPlayersView(APIView):
+    """
+    GET /api/teams/<team_id>/players/
+
+    Returns the current-season roster for a team with per-game averages.
+    """
+
+    def get(self, request, team_id: int):
+        try:
+            data = get_team_players(team_id)
         except ModelNotReady as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
-        missing = [c for c in columns if c not in features_dict]
-        if missing:
+        if data is None:
             return Response(
-                {"detail": f"Missing features: {missing}"},
-                status=status.HTTP_400_BAD_REQUEST,
+                {"detail": f"No roster found for team {team_id} in the current season."},
+                status=status.HTTP_404_NOT_FOUND,
             )
+        return Response(data)
 
-        row = [float(features_dict[c]) for c in columns]
+
+class LineupChemistryView(APIView):
+    """
+    POST /api/chemistry/lineup/
+
+    Computes chemistry for a lineup of 2-5 players on the same team.
+    Returns overall lineup chemistry (0-100), per-player bonuses, and
+    individual pair scores.
+    """
+
+    def post(self, request):
+        ser = LineupChemistryRequestSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        team_id = ser.validated_data["team_id"]
+        player_ids = ser.validated_data["player_ids"]
 
         try:
-            if model_name == "both":
-                result = {
-                    "xgboost": predict(row, "xgboost"),
-                    "random_forest": predict(row, "random_forest"),
-                }
-            else:
-                result = predict(row, model_name)
+            result = compute_lineup_chemistry(team_id, player_ids)
         except ModelNotReady as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         return Response(result)
 
 
-class ModelMetricsView(APIView):
+class PredictGameView(APIView):
     """
-    GET /api/models/metrics/
+    POST /api/predict/game/
 
-    Returns persisted cross-validation metrics and the expected feature list.
+    The user sends home_team_id, away_team_id, optional lineup player IDs
+    (2-5 each), and which model to use. The backend automatically looks up
+    each team's recent performance, computes rolling features and chemistry
+    (lineup-specific when player IDs are provided), runs the ML model, and
+    returns the prediction with supporting statistics, confidence, and
+    team ratings.
     """
+
+    def post(self, request):
+        ser = GamePredictionRequestSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        home_team_id = ser.validated_data["home_team_id"]
+        away_team_id = ser.validated_data["away_team_id"]
+        home_player_ids = ser.validated_data.get("home_player_ids") or []
+        away_player_ids = ser.validated_data.get("away_player_ids") or []
+        model_name = ser.validated_data["model"]
+
+        manual_features: dict | None = request.data.get("features")
+
+        if manual_features:
+            try:
+                columns = get_feature_columns()
+            except ModelNotReady as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+            missing = [c for c in columns if c not in manual_features]
+            if missing:
+                return Response(
+                    {"detail": f"Missing features: {missing}"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            row = [float(manual_features[c]) for c in columns]
+            supporting = None
+        else:
+            try:
+                row, supporting = build_features_for_matchup(
+                    home_team_id,
+                    away_team_id,
+                    home_player_ids=home_player_ids or None,
+                    away_player_ids=away_player_ids or None,
+                )
+            except ModelNotReady as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        try:
+            if model_name == "both":
+                prediction = {
+                    "xgboost": predict(row, "xgboost"),
+                    "random_forest": predict(row, "random_forest"),
+                }
+            else:
+                prediction = predict(row, model_name)
+        except ModelNotReady as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        # Add confidence score
+        if isinstance(prediction, dict) and "home_win_probability" in prediction:
+            prob = prediction["home_win_probability"]
+            prediction["confidence"] = round(abs(prob - 0.5) * 200, 1)
+
+        result = {"prediction": prediction}
+        if supporting:
+            result["supporting_stats"] = supporting
+
+        return Response(result)
+
+
+class ModelMetricsView(APIView):
+    """GET /api/models/metrics/"""
 
     def get(self, request):
         try:
@@ -102,9 +177,6 @@ class ModelMetricsView(APIView):
 class ChemistryPairView(APIView):
     """
     GET /api/chemistry/pair/?player_a_id=X&player_b_id=Y[&team_id=Z]
-
-    Looks up precomputed chemistry data for a player pair.
-    Falls back to a stub if chemistry artifacts are not available.
     """
 
     def get(self, request):
@@ -115,32 +187,23 @@ class ChemistryPairView(APIView):
         player_b = ser.validated_data["player_b_id"]
         team_id = ser.validated_data.get("team_id")
 
-        chem_path = Path(settings.MODEL_ARTIFACTS_DIR) / "chemistry_pairs.json"
-        if not chem_path.exists():
+        try:
+            results = lookup_pair_chemistry(player_a, player_b, team_id)
+        except ModelNotReady as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        if not results:
             return Response(
                 {
-                    "detail": (
-                        "Chemistry data not precomputed. "
-                        "Run train_models with lineup data first."
-                    ),
+                    "detail": "No chemistry data found for this player pair. "
+                              "They may not have been teammates in the dataset.",
                     "player_a_id": player_a,
                     "player_b_id": player_b,
                 },
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        with open(chem_path) as f:
-            all_pairs: list[dict] = json.load(f)
+        if len(results) == 1:
+            return Response(results[0])
 
-        pair_key = tuple(sorted([player_a, player_b]))
-        for entry in all_pairs:
-            e_key = tuple(sorted([entry["playerA"], entry["playerB"]]))
-            if e_key == pair_key:
-                if team_id and entry.get("teamId") != team_id:
-                    continue
-                return Response(entry)
-
-        return Response(
-            {"detail": "Pair not found", "player_a_id": player_a, "player_b_id": player_b},
-            status=status.HTTP_404_NOT_FOUND,
-        )
+        return Response({"pairs": results, "count": len(results)})
