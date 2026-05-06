@@ -43,10 +43,10 @@ N_FOLDS = 10
 # ── Hyperparameters ─────────────────────────────────────────────────────────
 
 RF_PARAMS = {
-    "n_estimators": 500,
-    "max_depth": 15,
-    "min_samples_split": 8,
-    "min_samples_leaf": 3,
+    "n_estimators": 200,
+    "max_depth": 6,
+    "min_samples_split": 20,
+    "min_samples_leaf": 12,
     "max_features": "sqrt",
     "random_state": 42,
     "n_jobs": -1,
@@ -54,16 +54,16 @@ RF_PARAMS = {
 }
 
 XGB_PARAMS = {
-    "n_estimators": 800,
-    "max_depth": 5,
-    "learning_rate": 0.03,
-    "subsample": 0.75,
-    "colsample_bytree": 0.7,
-    "colsample_bylevel": 0.7,
-    "reg_alpha": 0.3,
-    "reg_lambda": 2.0,
-    "min_child_weight": 5,
-    "gamma": 0.1,
+    "n_estimators": 200,
+    "max_depth": 3,
+    "learning_rate": 0.02,
+    "subsample": 0.55,
+    "colsample_bytree": 0.4,
+    "colsample_bylevel": 0.4,
+    "reg_alpha": 3.0,
+    "reg_lambda": 10.0,
+    "min_child_weight": 20,
+    "gamma": 1.5,
     "random_state": 42,
     "eval_metric": "logloss",
     "n_jobs": -1,
