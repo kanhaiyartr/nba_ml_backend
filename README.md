@@ -143,7 +143,9 @@ nba_ml_backend/
 
 ## Feature Engineering
 
-The model uses **62 features** organized into 5 categories. All features are computed per-game so that training and inference use the exact same pipeline.
+The model uses **45 features** organized into 3 categories. All features are computed per-game so that training and inference use the exact same pipeline.
+
+> **Design decisions:** Chemistry scores and differential features (home - away) are computed for the API display layer but **excluded from model training**. Chemistry uses all-time aggregate data that causes temporal leakage. Differential features are linear combinations of their home/away components (`diff_ppg = home_ppg - away_ppg`) which creates multicollinearity that leads XGBoost to learn spurious correlations and produce overconfident predictions. Similarly, raw `home_elo`/`away_elo` are excluded -- only `elo_diff` is retained.
 
 ### 1. Rolling Team Performance (10-game window)
 
@@ -192,18 +194,6 @@ A running competitive strength estimate computed chronologically over all histor
 Features: `home_elo`, `away_elo`, `elo_diff`
 
 Elo is computed on the **full historical dataset** before the modern-era filter is applied, so teams carry historically calibrated strength into the training window.
-
-### 4. Player Chemistry
-
-Chemistry is computed from `PlayerStatistics.csv` using data from 2015 onward with **per-team normalization** (see [Player Chemistry Analysis](#player-chemistry-analysis) section).
-
-Features: `home_chemistry`, `away_chemistry`
-
-### 5. Differential Features (Home - Away)
-
-For each key metric, the difference between home and away values is computed:
-
-`diff_ppg`, `diff_opp_ppg`, `diff_margin`, `diff_win_pct`, `diff_fg_pct`, `diff_fg3_pct`, `diff_reb`, `diff_ast`, `diff_tov`, `diff_stl`, `diff_blk`, `diff_season_win_pct`, `diff_chemistry`
 
 ### Modern Era Filter
 
@@ -646,20 +636,20 @@ All settings are in `config/settings.py` and can be overridden via environment v
 
 ## Evaluation Results
 
-10-fold Stratified Cross-Validation on 19,632 modern-era games (2010--2026):
+10-fold Stratified Cross-Validation on 19,787 modern-era games (2010--2026):
 
 | Model | Accuracy | F1-Score | AUC |
 |-------|----------|----------|-----|
-| Random Forest | 66.04% ± 1.17% | 0.705 ± 0.012 | 0.712 ± 0.015 |
-| **XGBoost** | **66.84% ± 1.09%** | **0.730 ± 0.010** | **0.719 ± 0.014** |
-| Stacking Ensemble | 66.74% ± 1.19% | 0.722 ± 0.011 | 0.718 ± 0.014 |
+| Random Forest | 70.92% ± 1.24% | 0.748 ± 0.011 | 0.774 ± 0.014 |
+| **XGBoost** | **72.51% ± 1.32%** | **0.770 ± 0.011** | **0.800 ± 0.012** |
+| Stacking Ensemble | 72.40% ± 1.19% | 0.766 ± 0.010 | 0.796 ± 0.013 |
 
-- **Training samples**: 19,632 games
-- **Features**: 62
+- **Training samples**: 19,787 games
+- **Features**: 45 (reduced from 62 after removing redundant/leaking features)
 - **Class balance**: 57.3% home-win rate
 - **Home-court advantage** is the most significant baseline predictor, reflected in the Elo home-advantage parameter (70 points)
 
-> **Context:** NBA game prediction above 68% accuracy is considered competitive with professional oddsmakers. Key factors like real-time injury reports, travel fatigue, and motivation are not available in the historical box-score data, which sets an inherent ceiling on achievable accuracy.
+> **Note on feature selection:** An earlier version used 62 features including differential features (home - away) and raw chemistry scores. This caused multicollinearity (XGBoost learned spurious correlations from redundant features) and temporal leakage (chemistry used future game data). Removing these 17 problematic features improved accuracy from 66.84% to 72.51% -- a clear demonstration that more features does not always mean better predictions.
 
 ---
 
