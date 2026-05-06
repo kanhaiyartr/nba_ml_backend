@@ -622,6 +622,13 @@ def lookup_pair_chemistry(
     return records
 
 
+_MAX_PROB = 0.68
+
+
+def _clip(p: float) -> float:
+    return float(np.clip(p, 1 - _MAX_PROB, _MAX_PROB))
+
+
 def predict(feature_values: list | np.ndarray, model_name: str = "xgboost") -> dict:
     """
     Run inference on a single feature row.
@@ -647,7 +654,7 @@ def predict(feature_values: list | np.ndarray, model_name: str = "xgboost") -> d
         rf_prob = float(rf_model.predict_proba(row)[0, 1])
         xgb_prob = float(xgb_model.predict_proba(row)[0, 1])
         meta_input = np.array([[rf_prob, xgb_prob]])
-        prob = float(meta.predict_proba(meta_input)[0, 1])
+        prob = _clip(meta.predict_proba(meta_input)[0, 1])
         label = int(prob >= 0.5)
 
         return {
@@ -655,8 +662,8 @@ def predict(feature_values: list | np.ndarray, model_name: str = "xgboost") -> d
             "home_win_probability": round(prob, 4),
             "predicted_winner": "home" if label == 1 else "away",
             "component_probabilities": {
-                "random_forest": round(rf_prob, 4),
-                "xgboost": round(xgb_prob, 4),
+                "random_forest": round(_clip(rf_prob), 4),
+                "xgboost": round(_clip(xgb_prob), 4),
             },
         }
 
@@ -665,7 +672,7 @@ def predict(feature_values: list | np.ndarray, model_name: str = "xgboost") -> d
     if model is None:
         raise ModelNotReady(f"Model '{model_name}' not found in artifacts.")
 
-    prob = float(model.predict_proba(row)[0, 1])
+    prob = _clip(model.predict_proba(row)[0, 1])
     label = int(prob >= 0.5)
 
     from ml.explain import explain_single
